@@ -11,6 +11,8 @@ tasks.withType(JavaCompile).configureEach { options.release = 17 }
 
 repositories { mavenCentral() }
 
+dependencies { implementation project(':browser-core') }
+
 javafx {
     version = '21.0.4'
     modules = ['javafx.controls']
