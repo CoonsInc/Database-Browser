@@ -30,7 +30,11 @@ import org.databasebrowser.core.domain.Schema.Table;
 import org.databasebrowser.core.domain.Schema.Unique;
 import org.databasebrowser.core.domain.Schema.View;
 
-/** Common structural checks only; identifier comparison comes from the provider. */
+/**
+ * Класс проверяет только структуру запроса: обязательные поля, непустые имена, дубликаты и арность внешних ключей.
+ * Регистр и эквивалентность идентификаторов задаёт адаптер через {@link IdentifierRules}; ошибки SQL и реальной БД здесь не проверяются.
+ * {@link #validate} собирает все найденные {@link Problem} и возвращает их списком без исключений.
+ */
 public final class ChangeValidator {
     private final IdentifierRules names;
 
@@ -38,6 +42,10 @@ public final class ChangeValidator {
         this.names = Objects.requireNonNull(names);
     }
 
+    /**
+     * Проверяет один запрос изменения и возвращает все найденные проблемы.
+     * Пустой список означает только структурную корректность, не успех выполнения в БД.
+     */
     public List<Problem> validate(Request request) {
         List<Problem> p = new ArrayList<>();
         if (request == null) {

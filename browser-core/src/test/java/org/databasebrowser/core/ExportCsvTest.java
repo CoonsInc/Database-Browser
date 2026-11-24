@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.databasebrowser.core.application.CsvService;
+import org.databasebrowser.core.application.usecase.ExportCsv;
 import org.databasebrowser.core.domain.Errors.Code;
 import org.databasebrowser.core.domain.Errors.CoreException;
 import org.databasebrowser.core.domain.Exports.CsvOptions;
@@ -24,7 +24,7 @@ import org.databasebrowser.core.domain.Sql.ResultColumn;
 import org.databasebrowser.core.domain.Sql.Row;
 import org.junit.jupiter.api.Test;
 
-class CsvServiceTest {
+class ExportCsvTest {
     static class Source implements RowSource {
         int reads, closed, remaining = 5;
 
@@ -54,7 +54,7 @@ class CsvServiceTest {
     @Test
     void streamsAndCloses() {
         Source source = new Source();
-        CsvService service = new CsvService((s, t, o, c) -> {
+        ExportCsv service = new ExportCsv((s, t, o, c) -> {
             long count = 0;
             Batch b;
             do {
@@ -74,7 +74,7 @@ class CsvServiceTest {
     void errorClosesAndPreserves() {
         Source source = new Source();
         CoreException failure = new CoreException(Code.IO, "disk full");
-        CsvService service = new CsvService((s, t, o, c) -> {
+        ExportCsv service = new ExportCsv((s, t, o, c) -> {
             s.fetch(2);
             throw failure;
         });
@@ -90,7 +90,7 @@ class CsvServiceTest {
     void cancelCloses() {
         Source source = new Source();
         AtomicBoolean cancelled = new AtomicBoolean();
-        CsvService service = new CsvService((s, t, o, c) -> {
+        ExportCsv service = new ExportCsv((s, t, o, c) -> {
             s.fetch(2);
             cancelled.set(true);
             s.fetch(2);
@@ -108,7 +108,7 @@ class CsvServiceTest {
     @Test
     void wrongScopeRejectedAndClosed() {
         Source source = new Source();
-        CsvService service = new CsvService((s, t, o, c) -> {
+        ExportCsv service = new ExportCsv((s, t, o, c) -> {
             fail("Must not reach port");
             return new CsvResult(0);
         });
@@ -123,7 +123,7 @@ class CsvServiceTest {
 
     @Test
     void selectedBatchIsExplicit() {
-        try (RowSource source = CsvService.selectedBatch(
+        try (RowSource source = ExportCsv.selectedBatch(
                  List.of(), new Batch(List.of(new Row(List.of())), false))) {
             assertEquals(RowScope.SELECTED_BATCH, source.scope());
             assertTrue(source.fetch(1).complete());

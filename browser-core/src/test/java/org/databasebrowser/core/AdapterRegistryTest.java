@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -25,8 +26,14 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import org.databasebrowser.core.application.BrowserService;
+import org.databasebrowser.core.application.AdapterFactory;
+import org.databasebrowser.core.application.AdapterInfo;
+import org.databasebrowser.core.application.AdapterRegistry;
 import org.databasebrowser.core.application.ChangeValidator;
+import org.databasebrowser.core.application.ConnectionValuesReader;
+import org.databasebrowser.core.application.ExportPorts;
+import org.databasebrowser.core.application.SessionScope;
+import org.databasebrowser.core.application.Usecases;
 import org.databasebrowser.core.domain.Changes.AddConstraint;
 import org.databasebrowser.core.domain.Changes.ApplyResult;
 import org.databasebrowser.core.domain.Changes.ApplyStatus;
@@ -43,17 +50,22 @@ import org.databasebrowser.core.domain.Changes.Step;
 import org.databasebrowser.core.domain.Changes.StepKind;
 import org.databasebrowser.core.domain.Connections.Capabilities;
 import org.databasebrowser.core.domain.Connections.ChangeKind;
+import org.databasebrowser.core.domain.Connections.ConnectionSchema;
+import org.databasebrowser.core.domain.Connections.ConnectionValues;
 import org.databasebrowser.core.domain.Connections.DatabaseInfo;
 import org.databasebrowser.core.domain.Connections.ExecutionMode;
 import org.databasebrowser.core.domain.Connections.IdentifierRules;
 import org.databasebrowser.core.domain.Connections.Opened;
-import org.databasebrowser.core.domain.Connections.Settings;
+import org.databasebrowser.core.domain.Connections.Session;
+import org.databasebrowser.core.domain.Connections.SettingField;
+import org.databasebrowser.core.domain.Connections.SettingKind;
 import org.databasebrowser.core.domain.Connections.Support;
 import org.databasebrowser.core.domain.Connections.SupportedType;
 import org.databasebrowser.core.domain.Connections.TransactionPolicy;
 import org.databasebrowser.core.domain.Errors.Code;
 import org.databasebrowser.core.domain.Errors.CoreException;
 import org.databasebrowser.core.domain.Errors.Diagnostic;
+import org.databasebrowser.core.domain.Exports.CsvResult;
 import org.databasebrowser.core.domain.Exports.Ddl;
 import org.databasebrowser.core.domain.Exports.DdlOptions;
 import org.databasebrowser.core.domain.Exports.DependencyPolicy;
@@ -82,10 +94,9 @@ import org.databasebrowser.core.domain.Schema.Snapshot;
 import org.databasebrowser.core.domain.Schema.Table;
 import org.databasebrowser.core.domain.Schema.Unique;
 import org.databasebrowser.core.domain.Sql;
-import org.databasebrowser.core.port.AdapterProvider;
-import org.databasebrowser.core.port.AdapterProvider.AdapterPorts;
 import org.databasebrowser.core.port.ConnectionPort;
 import org.databasebrowser.core.port.DatabaseInfoPort;
+import org.databasebrowser.core.port.DatabasePorts;
 import org.databasebrowser.core.port.DdlExportPort;
 import org.databasebrowser.core.port.QueryPlanPort;
 import org.databasebrowser.core.port.SchemaChangePort;
@@ -95,7 +106,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class BrowserServiceTest {
+class AdapterRegistryTest {
     static final AdapterId ADAPTER = new AdapterId("test");
     static final Definition DEFINITION =
         new Definition(Optional.of("original SQL"), Map.of(), true);
@@ -104,10 +115,14 @@ class BrowserServiceTest {
     static final Column COLUMN =
         new Column("id", new DataType("integer", List.of(), Optional.empty(), true), false,
             Optional.empty(), Map.of());
+    static final ConnectionSchema SCHEMA = new ConnectionSchema(List.of(
+        new SettingField("path", "Database path", SettingKind.PATH, true, false),
+        new SettingField("password", "Password", SettingKind.STRING, false, true),
+        new SettingField("wal", "Use WAL", SettingKind.BOOLEAN, false, false),
+        new SettingField("cache", "Cache size", SettingKind.NUMBER, false, false)));
 
-    static class Fake implements AdapterProvider, ConnectionPort, DatabaseInfoPort,
-                                 SchemaReaderPort, SchemaChangePort, SqlExecutionPort,
-                                 QueryPlanPort, DdlExportPort {
+    static class Fake implements ConnectionPort, DatabaseInfoPort, SchemaReaderPort,
+                                  SchemaChangePort, SqlExecutionPort, QueryPlanPort, DdlExportPort {
         final Set<SessionId> live = ConcurrentHashMap.newKeySet();
         final Map<ResultId, SessionId> cursors = new ConcurrentHashMap<>();
         final Map<SessionId, String> tokens = new ConcurrentHashMap<>();
@@ -119,19 +134,15 @@ class BrowserServiceTest {
         volatile SessionId cancelled;
         QueryPlan queryPlan;
 
-        public AdapterId id() {
-            return ADAPTER;
-        }
-
         public IdentifierRules identifierRules() {
             return String::equals;
         }
 
-        public AdapterPorts ports() {
-            return new AdapterPorts(this, this, this, this, this, this, this);
+        public DatabasePorts ports() {
+            return new DatabasePorts(this, this, this, this, this, this, this);
         }
 
-        public Opened connect(Settings s) {
+        public Opened connect(ConnectionValues values) {
             if (connectError != null)
                 throw connectError;
             SessionId id = new SessionId(UUID.randomUUID());
@@ -250,27 +261,84 @@ class BrowserServiceTest {
             return new Ddl("-- original\nDDL;\n", List.of(), false);
         }
     }
+
+    static class Factory implements AdapterFactory {
+        final Fake fake;
+        final AdapterId id;
+        final ConnectionSchema schema;
+        final List<ConnectionValues> opened = new ArrayList<>();
+        final List<String> names = new ArrayList<>();
+
+        Factory(Fake fake, AdapterId id, ConnectionSchema schema) {
+            this.fake = fake;
+            this.id = id;
+            this.schema = schema;
+        }
+
+        public AdapterId id() {
+            return id;
+        }
+
+        public String displayName() {
+            return "Test adapter";
+        }
+
+        public ConnectionSchema schema() {
+            return schema;
+        }
+
+        public Usecases open(String displayName, ConnectionValues values, ExportPorts exports) {
+            names.add(displayName);
+            opened.add(values);
+            ConnectionValuesReader.path(values, "path");
+            ConnectionValuesReader.flag(values, "wal", false);
+            ConnectionValuesReader.number(values, "cache", 100);
+            values.secrets().get("password");
+            Opened connection = fake.connect(values);
+            SessionScope scope = new SessionScope(
+                new Session(connection.id(), id, displayName, connection.info()),
+                fake.ports(), fake.identifierRules());
+            return Usecases.bind(scope, exports);
+        }
+    }
+
+    static ConnectionValues values() {
+        return new ConnectionValues(
+            Map.of("path", "/tmp/test.db", "wal", "true", "cache", "10"),
+            Map.of("password", "SECRET"));
+    }
+
+    static ExportPorts exports(List<String> writes) {
+        return new ExportPorts((source, target, options, cancellation) -> new CsvResult(0),
+            (target, text, options) -> writes.add(text));
+    }
+
     List<String> writes = new ArrayList<>();
     Fake fake;
-    BrowserService core;
+    Factory factory;
+    AdapterRegistry registry;
+    Usecases first, second;
     SessionId a, b;
 
     @BeforeEach
     void setup() {
         fake = new Fake();
-        core = new BrowserService(List.of(fake), (target, text, opts) -> writes.add(text));
-        a = connect();
-        b = connect();
+        factory = new Factory(fake, ADAPTER, SCHEMA);
+        registry = new AdapterRegistry(List.of(factory), exports(writes));
+        first = open("first", values());
+        second = open("second", values());
+        a = first.scope().session().id();
+        b = second.scope().session().id();
     }
 
     @AfterEach
     void shutdown() {
-        core.close();
+        first.close();
+        second.close();
     }
 
-    SessionId connect() {
-        return core.connect(new Settings(ADAPTER, "db", Map.of(), Map.of("password", "SECRET")))
-            .id();
+    Usecases open(String displayName, ConnectionValues values) {
+        return registry.open(ADAPTER, displayName, values);
     }
 
     static Table table(SessionId id, String name) {
@@ -279,14 +347,18 @@ class BrowserServiceTest {
             DEFINITION);
     }
 
-    Sql.Request sql() {
-        return new Sql.Request(core.newOperationId(), "select 1", List.of(),
+    static Sql.Request sql(OperationId operation) {
+        return new Sql.Request(operation, "select 1", List.of(),
             new Sql.Options(
                 ExecutionMode.SINGLE_STATEMENT, TransactionPolicy.AUTOCOMMIT, 2, Duration.ZERO));
     }
 
+    Sql.Request sql() {
+        return sql(first.sql().newOperationId());
+    }
+
     Plan plan() {
-        return core.prepareChange(a, new CreateTable(table(a, "new"))).plan().orElseThrow();
+        return first.change().prepareChange(new CreateTable(table(a, "new"))).plan().orElseThrow();
     }
 
     static void code(Code expected, org.junit.jupiter.api.function.Executable call) {
@@ -295,25 +367,54 @@ class BrowserServiceTest {
 
     @Test
     void connectionsAndMetadata() {
-        assertEquals(2, core.sessions().size());
-        assertTrue(core.checkConnection(a));
-        assertEquals("TestDB", core.databaseInfo(a).product());
-        assertEquals(1, core.supportedTypes(a).size());
-        assertEquals(1, core.readSchema(a).objects().size());
-        assertSame(DEFINITION, core.readObjectDefinition(a, new ObjectId(a, "existing")));
-        assertFalse(core.findDependencies(a, new ObjectId(a, "existing")).complete());
-        assertFalse(new Settings(ADAPTER, "SECRET", Map.of("url", "SECRET"), Map.of())
-                .toString()
-                .contains("SECRET"));
+        assertEquals(List.of(new AdapterInfo(ADAPTER, "Test adapter")), registry.available());
+        assertEquals(SCHEMA, registry.schema(ADAPTER));
+        code(Code.UNKNOWN_ADAPTER, () -> registry.schema(new AdapterId("missing")));
+        assertEquals(SettingKind.PATH, factory.schema().fields().get(0).kind());
+        assertTrue(factory.schema().fields().get(1).secret());
+        assertEquals(List.of("first", "second"), factory.names);
+        assertTrue(first.inspect().checkConnection());
+        assertEquals("TestDB", first.inspect().databaseInfo().product());
+        assertEquals(1, first.inspect().supportedTypes().size());
+        assertEquals(1, first.read().readSchema().objects().size());
+        assertSame(DEFINITION, first.read().readObjectDefinition(new ObjectId(a, "existing")));
+        assertFalse(first.read().findDependencies(new ObjectId(a, "existing")).complete());
+        assertFalse(values().toString().contains("SECRET"));
+    }
+
+    @Test
+    void valuesBridgeConvertsGenericStrings() {
+        ConnectionValues v = values();
+        assertEquals(Path.of("/tmp/test.db"), ConnectionValuesReader.path(v, "path"));
+        assertTrue(ConnectionValuesReader.flag(v, "wal", false));
+        assertEquals(10, ConnectionValuesReader.number(v, "cache", 0));
+        assertEquals("SECRET", ConnectionValuesReader.secret(v, "password"));
+        code(Code.INVALID_INPUT, () -> ConnectionValuesReader.path(
+            new ConnectionValues(Map.of("path", "\0"), Map.of()), "path"));
     }
 
     @Test
     void unknownAndConnectionFailure() {
         code(Code.UNKNOWN_ADAPTER,
-            () -> core.connect(new Settings(new AdapterId("missing"), "db", Map.of(), Map.of())));
+            () -> registry.open(new AdapterId("missing"), "db", values()));
+        code(Code.INVALID_INPUT, () -> registry.open(ADAPTER, " ", values()));
+        code(Code.INVALID_INPUT, () -> registry.open(ADAPTER, "db", null));
         fake.connectError = new CoreException(Code.CONNECTION, "safe");
-        assertSame(fake.connectError, assertThrows(CoreException.class, this::connect));
-        assertEquals(2, core.sessions().size());
+        assertSame(fake.connectError,
+            assertThrows(CoreException.class, () -> open("db", values())));
+        Factory broken = new Factory(fake, ADAPTER, SCHEMA) {
+            @Override
+            public Usecases open(String displayName, ConnectionValues values, ExportPorts exports) {
+                throw new IllegalStateException("SECRET");
+            }
+        };
+        AdapterRegistry brokenRegistry =
+            new AdapterRegistry(List.of(broken), exports(writes));
+        CoreException normalized = assertThrows(CoreException.class,
+            () -> brokenRegistry.open(ADAPTER, "db", values()));
+        assertEquals(Code.INTERNAL, normalized.code());
+        assertFalse(normalized.getMessage().contains("SECRET"));
+        assertEquals(2, fake.live.size());
     }
 
     @Test
@@ -323,7 +424,7 @@ class BrowserServiceTest {
             List.of(new PrimaryKey(Optional.empty(), List.of("missing")),
                 new PrimaryKey(Optional.empty(), List.of("id"))),
             DEFINITION);
-        Preparation out = core.prepareChange(a, new CreateTable(t));
+        Preparation out = first.change().prepareChange(new CreateTable(t));
         assertTrue(out.plan().isEmpty());
         assertTrue(out.problems().size() >= 4);
         assertEquals(0, fake.prepares);
@@ -334,66 +435,68 @@ class BrowserServiceTest {
     void exactPreparedPlanAndRepeat() {
         Plan p = plan();
         assertEquals(0, fake.applies);
-        assertEquals(ApplyStatus.APPLIED, core.applyChange(a, p.id()).status());
+        assertEquals(ApplyStatus.APPLIED, first.change().applyChange(p.id()).status());
         assertSame(fake.prepared, fake.applied);
-        code(Code.ALREADY_APPLIED, () -> core.applyChange(a, p.id()));
+        code(Code.ALREADY_APPLIED, () -> first.change().applyChange(p.id()));
     }
 
     @Test
     void foreignUnknownAndStalePlans() {
         Plan p = plan();
-        code(Code.WRONG_SESSION, () -> core.applyChange(b, p.id()));
-        code(Code.NOT_FOUND, () -> core.applyChange(a, new ChangePlanId(UUID.randomUUID())));
+        code(Code.WRONG_SESSION, () -> second.change().applyChange(p.id()));
+        code(Code.NOT_FOUND, () -> first.change().applyChange(new ChangePlanId(UUID.randomUUID())));
         fake.tokens.put(a, "v2");
-        assertEquals(ApplyStatus.CONFLICT, core.applyChange(a, p.id()).status());
+        assertEquals(ApplyStatus.CONFLICT, first.change().applyChange(p.id()).status());
         assertEquals(1, fake.prepares);
-        code(Code.ALREADY_APPLIED, () -> core.applyChange(a, p.id()));
+        code(Code.ALREADY_APPLIED, () -> first.change().applyChange(p.id()));
     }
 
     @Test
     void ambiguousNeverRetried() {
         Plan p = plan();
         fake.ambiguous = true;
-        code(Code.OUTCOME_UNKNOWN, () -> core.applyChange(a, p.id()));
-        code(Code.ALREADY_APPLIED, () -> core.applyChange(a, p.id()));
+        code(Code.OUTCOME_UNKNOWN, () -> first.change().applyChange(p.id()));
+        code(Code.ALREADY_APPLIED, () -> first.change().applyChange(p.id()));
         assertEquals(1, fake.applies);
     }
 
     @Test
     void sqlRowsCommandAndOwnership() {
-        Sql.Execution out = core.execute(a, sql());
+        Sql.Execution out = first.sql().execute(sql());
         ResultId rid = out.result().orElseThrow();
         assertTrue(out.statistics().totalRows().isEmpty());
-        code(Code.WRONG_SESSION, () -> core.fetchRows(b, rid, 2));
-        assertTrue(core.fetchRows(a, rid, 2).complete());
-        assertTrue(core.fetchRows(a, rid, 2).rows().isEmpty());
+        code(Code.WRONG_SESSION, () -> second.sql().fetchRows(rid, 2));
+        assertTrue(first.sql().fetchRows(rid, 2).complete());
+        assertTrue(first.sql().fetchRows(rid, 2).rows().isEmpty());
         assertEquals(1, fake.fetches);
-        core.closeResult(a, rid);
-        core.closeResult(a, rid);
-        code(Code.NOT_FOUND, () -> core.fetchRows(a, rid, 1));
+        first.sql().closeResult(rid);
+        first.sql().closeResult(rid);
+        code(Code.NOT_FOUND, () -> first.sql().fetchRows(rid, 1));
         fake.command = true;
-        Sql.Execution command = core.execute(b, sql());
+        Sql.Execution command = second.sql().execute(sql(second.sql().newOperationId()));
         assertTrue(command.result().isEmpty());
         assertEquals(3, command.statistics().affectedRows().orElseThrow());
     }
 
     @Test
     void objectIsolation() {
-        code(Code.WRONG_SESSION, () -> core.readObjectDefinition(b, new ObjectId(a, "existing")));
-        code(Code.WRONG_SESSION, () -> core.prepareChange(b, new CreateTable(table(a, "new"))));
+        code(Code.WRONG_SESSION,
+            () -> second.read().readObjectDefinition(new ObjectId(a, "existing")));
+        code(
+            Code.WRONG_SESSION, () -> second.change().prepareChange(new CreateTable(table(a, "new"))));
     }
 
     @Test
     void closeIsolatedIdempotent() {
-        core.execute(a, sql());
-        core.execute(b, sql());
-        core.disconnect(a);
-        core.disconnect(a);
+        first.sql().execute(sql());
+        second.sql().execute(sql(second.sql().newOperationId()));
+        first.close();
+        first.close();
         assertEquals(1, fake.disconnects);
         assertEquals(Set.of(b), fake.live);
         assertEquals(Set.of(b), new HashSet<>(fake.cursors.values()));
-        assertTrue(core.checkConnection(b));
-        code(Code.UNKNOWN_SESSION, () -> core.execute(a, sql()));
+        assertTrue(second.inspect().checkConnection());
+        code(Code.UNKNOWN_SESSION, () -> first.sql().execute(sql(first.sql().newOperationId())));
     }
 
     @Test
@@ -403,13 +506,13 @@ class BrowserServiceTest {
         Sql.Request request = sql();
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
-            Future<Sql.Execution> running = pool.submit(() -> core.execute(a, request));
+            Future<Sql.Execution> running = pool.submit(() -> first.sql().execute(request));
             assertTrue(fake.started.await(5, TimeUnit.SECONDS));
-            code(Code.WRONG_SESSION, () -> core.cancel(b, request.operationId()));
-            assertEquals(Sql.CancelResult.REQUESTED, core.cancel(a, request.operationId()));
+            code(Code.WRONG_SESSION, () -> second.sql().cancel(request.operationId()));
+            assertEquals(Sql.CancelResult.REQUESTED, first.sql().cancel(request.operationId()));
             running.get(5, TimeUnit.SECONDS);
             assertEquals(a, fake.cancelled);
-            assertEquals(Sql.CancelResult.NOT_ACTIVE, core.cancel(a, request.operationId()));
+            assertEquals(Sql.CancelResult.NOT_ACTIVE, first.sql().cancel(request.operationId()));
         } finally {
             fake.release.countDown();
             pool.shutdownNow();
@@ -422,10 +525,10 @@ class BrowserServiceTest {
         fake.release = new CountDownLatch(1);
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
-            Future<?> running = pool.submit(() -> core.execute(a, sql()));
+            Future<?> running = pool.submit(() -> first.sql().execute(sql()));
             assertTrue(fake.started.await(5, TimeUnit.SECONDS));
-            assertTrue(core.checkConnection(b));
-            core.disconnect(a);
+            assertTrue(second.inspect().checkConnection());
+            first.close();
             running.get(5, TimeUnit.SECONDS);
             assertEquals(a, fake.cancelled);
             assertTrue(fake.cursors.isEmpty());
@@ -443,7 +546,7 @@ class BrowserServiceTest {
         Callable<Object> attempt = () -> {
             start.await();
             try {
-                return core.applyChange(a, p.id());
+                return first.change().applyChange(p.id());
             } catch (CoreException e) {
                 return e.code();
             }
@@ -470,7 +573,7 @@ class BrowserServiceTest {
                 Optional.empty(), "raw node", metrics, Map.of("extra", "data"), List.of());
         fake.queryPlan =
             new QueryPlan(Mode.ESTIMATED, List.of(node), "raw explain", "vendor-format", Map.of());
-        QueryPlan out = core.explain(a, sql(), Mode.ESTIMATED);
+        QueryPlan out = first.explain().explain(sql(), Mode.ESTIMATED);
         assertSame(fake.queryPlan, out);
         assertEquals("VENDOR_OP", out.roots().get(0).originalType());
         assertTrue(out.roots().get(0).metrics().cost().isEmpty());
@@ -479,7 +582,7 @@ class BrowserServiceTest {
 
     @Test
     void ddlUnchanged() {
-        Ddl ddl = core.saveDdl(a, new DdlOptions(true, Set.of(), DependencyPolicy.INCLUDE),
+        Ddl ddl = first.ddl().saveDdl(new DdlOptions(true, Set.of(), DependencyPolicy.INCLUDE),
             new Target("output"), new TextOptions(StandardCharsets.UTF_8, false));
         assertEquals(List.of(ddl.sql()), writes);
         assertEquals("-- original\nDDL;\n", writes.get(0));
@@ -490,7 +593,7 @@ class BrowserServiceTest {
     void diagnosticsPreserved() {
         Diagnostic d = new Diagnostic(Optional.of("vendor"), Optional.of("state"), "safe detail");
         fake.executeError = new CoreException(Code.SQL, "syntax", List.of(), Optional.of(d));
-        CoreException out = assertThrows(CoreException.class, () -> core.execute(a, sql()));
+        CoreException out = assertThrows(CoreException.class, () -> first.sql().execute(sql()));
         assertSame(fake.executeError, out);
         assertEquals(d, out.diagnostic().orElseThrow());
     }
@@ -508,20 +611,20 @@ class BrowserServiceTest {
 
     @Test
     void transferredCursorHasExclusiveOwnership() {
-        ResultId rid = core.execute(a, sql()).result().orElseThrow();
-        try (RowSource source = core.remainingRows(a, rid)) {
+        ResultId rid = first.sql().execute(sql()).result().orElseThrow();
+        try (RowSource source = first.sql().remainingRows(rid)) {
             assertEquals(RowScope.REMAINING, source.scope());
-            code(Code.CONFLICT, () -> core.fetchRows(a, rid, 1));
-            code(Code.CONFLICT, () -> core.closeResult(a, rid));
+            code(Code.CONFLICT, () -> first.sql().fetchRows(rid, 1));
+            code(Code.CONFLICT, () -> first.sql().closeResult(rid));
             assertTrue(source.fetch(1).complete());
         }
         assertFalse(fake.cursors.containsKey(rid));
-        code(Code.NOT_FOUND, () -> core.fetchRows(a, rid, 1));
+        code(Code.NOT_FOUND, () -> first.sql().fetchRows(rid, 1));
     }
 
     @Test
     void contextualConstraintValidation() {
-        Preparation out = core.prepareChange(a,
+        Preparation out = first.change().prepareChange(
             new AddConstraint(
                 new ObjectId(a, "existing"), new Unique(Optional.empty(), List.of("missing"))));
         assertTrue(out.plan().isEmpty());
@@ -537,13 +640,18 @@ class BrowserServiceTest {
                 return new Capabilities(Map.of(), false, false, Set.of(), Set.of());
             }
         };
-        try (BrowserService other =
-                 new BrowserService(List.of(unsupported), (target, text, opts) -> {})) {
-            SessionId id = other.connect(new Settings(ADAPTER, "db", Map.of(), Map.of())).id();
+        Factory otherFactory = new Factory(unsupported, ADAPTER, SCHEMA);
+        AdapterRegistry otherRegistry =
+            new AdapterRegistry(List.of(otherFactory), exports(new ArrayList<>()));
+        try (Usecases other = otherRegistry.open(ADAPTER, "db", values())) {
+            SessionId id = other.scope().session().id();
             code(
-                Code.UNSUPPORTED, () -> other.prepareChange(id, new CreateTable(table(id, "new"))));
-            code(Code.UNSUPPORTED, () -> other.execute(id, sql()));
-            code(Code.UNSUPPORTED, () -> other.explain(id, sql(), Mode.ESTIMATED));
+                Code.UNSUPPORTED, () -> other.change().prepareChange(new CreateTable(table(id, "new"))));
+            code(
+                Code.UNSUPPORTED,
+                () -> other.sql().execute(sql(other.sql().newOperationId())));
+            code(Code.UNSUPPORTED,
+                () -> other.explain().explain(sql(other.sql().newOperationId()), Mode.ESTIMATED));
             assertEquals(0, unsupported.prepares);
         }
     }
@@ -551,15 +659,15 @@ class BrowserServiceTest {
     @Test
     void operationCannotBeReused() {
         Sql.Request r = sql();
-        core.execute(a, r);
-        code(Code.CONFLICT, () -> core.execute(a, r));
-        code(Code.WRONG_SESSION, () -> core.execute(b, r));
+        first.sql().execute(r);
+        code(Code.CONFLICT, () -> first.sql().execute(r));
+        code(Code.WRONG_SESSION, () -> second.sql().execute(r));
     }
 
     @Test
     void identifierRulesAreAdapterDefined() {
         ChangeValidator sensitive = new ChangeValidator(String::equals),
-                        insensitive = new ChangeValidator(String::equalsIgnoreCase);
+                         insensitive = new ChangeValidator(String::equalsIgnoreCase);
         Column upper = new Column("ID", COLUMN.type(), true, Optional.of("NULL"), Map.of());
         CreateTable request = new CreateTable(new Table(new ObjectId(a, "t"), table(a, "t").name(),
             List.of(COLUMN, upper), List.of(), DEFINITION));

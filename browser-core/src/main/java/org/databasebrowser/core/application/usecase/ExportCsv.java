@@ -1,4 +1,4 @@
-package org.databasebrowser.core.application;
+package org.databasebrowser.core.application.usecase;
 
 import static org.databasebrowser.core.domain.Errors.error;
 
@@ -17,14 +17,25 @@ import org.databasebrowser.core.domain.Sql.ResultColumn;
 import org.databasebrowser.core.domain.Sql.Row;
 import org.databasebrowser.core.port.CsvExportPort;
 
-/** Takes ownership immediately, including on invalid requests. */
-public final class CsvService {
+/**
+ * Юзкейс экспортирует результат запроса в CSV через порт {@link CsvExportPort}.
+ * Источник строк передаётся во владение сразу: {@code export} закроет его даже при некорректном запросе.
+ * Используется как {@code Usecases.csv()}; готовый пакет строк превращают в источник через {@link #selectedBatch(List, Batch)}.
+ */
+public final class ExportCsv {
     private final CsvExportPort port;
 
-    public CsvService(CsvExportPort port) {
+    /** Создаёт юзкейс с портом экспорта CSV; {@code null} запрещён. */
+    public ExportCsv(CsvExportPort port) {
         this.port = Objects.requireNonNull(port);
     }
 
+    /**
+     * Экспортирует {@code source} в {@code target} и возвращает {@link CsvResult}.
+     * Принимает владение {@code source} сразу и закрывает его при любом исходе, включая ошибку валидации.
+     * Требует совпадения {@code requested} с областью источника, корректных {@code options} и токена {@code cancellation}.
+     * Ошибки адаптера или нарушения контракта источника скрываются как {@link Code#INTERNAL}.
+     */
     public CsvResult export(RowSource source, RowScope requested, Target target, CsvOptions options,
         Cancellation cancellation) {
         Objects.requireNonNull(source);
@@ -44,19 +55,25 @@ public final class CsvService {
             if (cancellation.requested())
                 throw error(Code.CANCELLED, "CSV export cancelled");
             RowSource bounded = new RowSource() {
+                /** Возвращает копию колонок исходного результата. */
                 public List<ResultColumn> columns() {
                     return List.copyOf(source.columns());
                 }
 
+                /** Возвращает область исходного {@code source}. */
                 public RowScope scope() {
                     return source.scope();
                 }
 
+                /**
+                 * Проверяет отмену и положительный размер, затем читает не более {@code size} строк.
+                 * Адаптер не может вернуть больше строк, чем запрошено.
+                 */
                 public Batch fetch(int size) {
                     if (cancellation.requested())
                         throw error(Code.CANCELLED, "CSV export cancelled");
                     if (size < 1)
-                        throw error(Code.INVALID_INPUT, "Invalid fetch size");
+                        throw error(Code.INVALID_INPUT, "Fetch size must be positive");
                     int limit = Math.min(size, options.batchSize());
                     Batch b = source.fetch(limit);
                     if (b.rows().size() > limit)
@@ -64,6 +81,7 @@ public final class CsvService {
                     return b;
                 }
 
+                /** Пусто: владелец {@code source} закрывается сервисом {@code export}. */
                 public void close() {} // owner is closed by the service
             };
             CsvResult result = port.exportCsv(bounded, target, options, cancellation);
@@ -78,6 +96,11 @@ public final class CsvService {
         }
     }
 
+    /**
+     * Создаёт {@link RowSource} поверх уже загруженного {@code batch} с областью {@link RowScope#SELECTED_BATCH}.
+     * Возвращает копии колонок и строк и выдаёт их постранично без обращения к БД.
+     * После {@link RowSource#close()} выбор недоступен: повторный {@code fetch} даёт {@link Code#NOT_FOUND}.
+     */
     public static RowSource selectedBatch(List<ResultColumn> columns, Batch batch) {
         List<ResultColumn> metadata = List.copyOf(columns);
         List<Row> rows = List.copyOf(batch.rows());
@@ -85,25 +108,29 @@ public final class CsvService {
             int offset;
             boolean closed;
 
+            /** Возвращает неизменяемые колонки выборки. */
             public List<ResultColumn> columns() {
                 return metadata;
             }
 
+            /** Всегда сообщает {@link RowScope#SELECTED_BATCH}. */
             public RowScope scope() {
                 return RowScope.SELECTED_BATCH;
             }
 
+            /** Выдаёт следующий поддиапазон строк и флаг завершения; после закрытия недоступен. */
             public Batch fetch(int size) {
                 if (closed)
                     throw error(Code.NOT_FOUND, "Source closed");
                 if (size < 1)
-                    throw error(Code.INVALID_INPUT, "Invalid fetch size");
+                    throw error(Code.INVALID_INPUT, "Fetch size must be positive");
                 int end = (int) Math.min(rows.size(), (long) offset + size);
                 Batch b = new Batch(rows.subList(offset, end), end == rows.size());
                 offset = end;
                 return b;
             }
 
+            /** Помечает источник закрытым; повторный вызов ничего не меняет. */
             public void close() {
                 closed = true;
             }
