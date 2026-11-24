@@ -6,5 +6,5 @@ import org.databasebrowser.core.domain.Schema.Snapshot;
 
 /** Preserve source dialect, explicitly warn about missing definitions/dependencies. */
 public interface DdlExportPort {
-  Ddl generateDdl(Snapshot schemaSnapshot, DdlOptions options);
+    Ddl generateDdl(Snapshot schemaSnapshot, DdlOptions options);
 }

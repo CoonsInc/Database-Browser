@@ -12,6 +12,7 @@ import org.databasebrowser.core.domain.Ids.SessionId;
  * Recipe owns no live resources. Unknown outcomes must be reported, never retried automatically.
  */
 public interface SchemaChangePort {
-  Prepared prepareChange(SessionId sessionId, Request request);
-  ApplyResult applyChange(SessionId sessionId, Prepared plan);
+    Prepared prepareChange(SessionId sessionId, Request request);
+
+    ApplyResult applyChange(SessionId sessionId, Prepared plan);
 }

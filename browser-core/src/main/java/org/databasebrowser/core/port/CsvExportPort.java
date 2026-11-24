@@ -11,5 +11,6 @@ import org.databasebrowser.core.domain.Exports.Target;
  * Throw categorized IO/CANCELLED errors. Caller owns closing source.
  */
 public interface CsvExportPort {
-  CsvResult exportCsv(RowSource rowSource, Target target, CsvOptions options, Cancellation cancellation);
+    CsvResult exportCsv(
+        RowSource rowSource, Target target, CsvOptions options, Cancellation cancellation);
 }

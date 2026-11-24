@@ -7,7 +7,9 @@ import org.databasebrowser.core.domain.Schema.Dependencies;
 import org.databasebrowser.core.domain.Schema.Snapshot;
 
 public interface SchemaReaderPort {
-  Snapshot readSchema(SessionId sessionId);
-  Definition readObjectDefinition(SessionId sessionId, ObjectId objectId);
-  Dependencies findDependencies(SessionId sessionId, ObjectId objectId);
+    Snapshot readSchema(SessionId sessionId);
+
+    Definition readObjectDefinition(SessionId sessionId, ObjectId objectId);
+
+    Dependencies findDependencies(SessionId sessionId, ObjectId objectId);
 }

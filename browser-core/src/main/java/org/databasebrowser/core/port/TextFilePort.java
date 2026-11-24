@@ -4,5 +4,5 @@ import org.databasebrowser.core.domain.Exports.Target;
 import org.databasebrowser.core.domain.Exports.TextOptions;
 
 public interface TextFilePort {
-  void writeText(Target target, String text, TextOptions options);
+    void writeText(Target target, String text, TextOptions options);
 }
