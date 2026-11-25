@@ -56,12 +56,8 @@ final class SqliteOperations {
             return CancelResult.NOT_ACTIVE;
         }
 
+        // Обработчик прогресса применяет отмену только к текущей операции.
         active.cancelled = true;
-        try {
-            active.connection.getDatabase().interrupt();
-        } catch (SQLException e) {
-            throw SqliteErrors.failure(e, Code.SQL);
-        }
         return CancelResult.REQUESTED;
     }
 

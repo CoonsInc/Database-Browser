@@ -311,6 +311,8 @@ class SqliteAdapterTest {
 
             var options = new Sql.Options(ExecutionMode.SINGLE_STATEMENT, TransactionPolicy.AUTOCOMMIT,
                 1, Duration.ZERO);
+            var independent = ports.sql().execute(id, new Sql.Request(sql.newOperationId(),
+                "SELECT 10 UNION ALL SELECT 11 UNION ALL SELECT 12", List.of(), options));
             var execution = ports.sql().execute(id, new Sql.Request(sql.newOperationId(),
                 "SELECT 1 UNION ALL SELECT 2 UNION ALL SELECT pause_fetch()", List.of(), options));
             var cursor = execution.result().orElseThrow();
@@ -326,6 +328,8 @@ class SqliteAdapterTest {
             assertEquals(Code.CANCELLED, assertInstanceOf(CoreException.class, failure.getCause()).code());
             assertEquals(Sql.CancelResult.NOT_ACTIVE, ports.sql().cancel(id, read));
             ports.sql().closeResult(id, cursor);
+            var otherCursor = independent.result().orElseThrow();
+            assertEquals(List.of(11L, 12L), numbers(ports.sql().fetchRows(id, otherCursor, 2)));
             assertEquals(4, numberAt(ports.sql().execute(id,
                 new Sql.Request(sql.newOperationId(), "SELECT 4", List.of(), options)), 0));
         } finally {

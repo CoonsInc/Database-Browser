@@ -43,8 +43,10 @@ public final class SqliteAdapterProvider implements AdapterProvider {
         var session = new SqliteSession();
 
         return new AdapterPorts(session, session, new SqliteSchemaReader(session), SCHEMA_CHANGES,
-            session.queries(),
-            (id, request, mode) -> { throw error(Code.UNSUPPORTED, "SQLite query plans are not implemented"); },
-            (snapshot, options) -> { throw error(Code.UNSUPPORTED, "SQLite DDL export is not implemented"); });
+            session.queries(), (id, request, mode) -> {
+                throw error(Code.UNSUPPORTED, "SQLite query plans are not implemented");
+            }, (snapshot, options) -> {
+                throw error(Code.UNSUPPORTED, "SQLite DDL export is not implemented");
+            });
     }
 }
