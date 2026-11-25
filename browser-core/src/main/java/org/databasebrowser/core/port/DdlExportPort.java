@@ -4,7 +4,7 @@ import org.databasebrowser.core.domain.Exports.Ddl;
 import org.databasebrowser.core.domain.Exports.DdlOptions;
 import org.databasebrowser.core.domain.Schema.Snapshot;
 
-/** Preserve source dialect, explicitly warn about missing definitions/dependencies. */
+/** Сохраняет исходный диалект и предупреждает о неполных определениях и зависимостях. */
 public interface DdlExportPort {
     Ddl generateDdl(Snapshot schemaSnapshot, DdlOptions options);
 }

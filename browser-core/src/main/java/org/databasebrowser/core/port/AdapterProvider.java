@@ -5,8 +5,8 @@ import org.databasebrowser.core.domain.Connections.IdentifierRules;
 import org.databasebrowser.core.domain.Ids.AdapterId;
 
 /**
- * One provider may return a per-connection bundle; state must be isolated by session ID.
- * identifierRules is immutable and available without opening a database.
+ * Состояние портов изолировано по сессиям. Для каждой сессии возможен свой набор портов.
+ * Неизменяемые правила сравнения имён доступны до подключения.
  */
 public interface AdapterProvider {
     AdapterId id();

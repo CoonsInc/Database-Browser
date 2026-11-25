@@ -7,8 +7,8 @@ import org.databasebrowser.core.domain.Exports.RowSource;
 import org.databasebrowser.core.domain.Exports.Target;
 
 /**
- * Pull batches from source; poll cancellation throughout writing. Never buffer entire source.
- * Throw categorized IO/CANCELLED errors. Caller owns closing source.
+ * Пишет порциями без буферизации всех строк и проверяет отмену.
+ * Ошибки имеют код IO или CANCELLED. Источник закрывает вызывающая сторона.
  */
 public interface CsvExportPort {
     CsvResult exportCsv(

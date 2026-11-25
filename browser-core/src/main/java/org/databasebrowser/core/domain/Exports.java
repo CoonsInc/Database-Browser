@@ -24,12 +24,13 @@ public final class Exports {
             warnings = List.copyOf(warnings);
         }
     }
-    /** Opaque destination interpreted by IO adapter, e.g. a path or storage handle. */
+    /** Адрес назначения, который интерпретирует файловый адаптер. */
 
     public record Target(String value) {
         public Target {
-            if (value == null || value.isBlank())
+            if (value == null || value.isBlank()) {
                 throw new IllegalArgumentException("target");
+            }
         }
     }
 
@@ -49,10 +50,9 @@ public final class Exports {
         boolean requested();
     }
     /**
-     * Ownership transfers to CsvService even on validation failure. fetch must be bounded by
-     * batchSize. FULL_SOURCE asserts a fresh complete source; a partially read cursor must report
-     * REMAINING. IO must poll cancellation, preserve types via documented formatting, and never
-     * close this source itself.
+     * CsvService закрывает источник даже при ошибке проверки. Размер порции ограничен batchSize.
+     * FULL_SOURCE содержит полный результат, REMAINING — остаток прочитанного курсора.
+     * Файловый адаптер проверяет отмену и сохраняет типы по правилам форматирования.
      */
 
     public interface RowSource extends AutoCloseable {

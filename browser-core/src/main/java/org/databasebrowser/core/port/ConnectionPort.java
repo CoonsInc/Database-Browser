@@ -5,9 +5,9 @@ import org.databasebrowser.core.domain.Connections.Settings;
 import org.databasebrowser.core.domain.Ids.SessionId;
 
 /**
- * Provider generates a fresh UUID session ID and must not reuse it. disconnect is idempotent,
- * thread safe with cancel, releases results and running work; failures must report safe
- * diagnostics.
+ * Каждая сессия получает уникальный UUID. Повторное отключение безопасно.
+ * Отключение совместимо с отменой и освобождает результаты и активные операции.
+ * Ошибки содержат безопасную диагностику.
  */
 public interface ConnectionPort {
     Opened connect(Settings settings);

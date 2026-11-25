@@ -17,96 +17,135 @@ import org.databasebrowser.core.domain.Sql.ResultColumn;
 import org.databasebrowser.core.domain.Sql.Row;
 import org.databasebrowser.core.port.CsvExportPort;
 
-/** Takes ownership immediately, including on invalid requests. */
+/** Выполняет сценарий экспорта строк в CSV. */
 public final class CsvService {
     private final CsvExportPort port;
 
+    /** Подключает файловый порт для записи CSV. */
     public CsvService(CsvExportPort port) {
         this.port = Objects.requireNonNull(port);
     }
 
+    /** Проверяет область экспорта, передаёт строки на запись и закрывает источник. */
     public CsvResult export(RowSource source, RowScope requested, Target target, CsvOptions options,
         Cancellation cancellation) {
         Objects.requireNonNull(source);
         try (source) {
-            if (requested == null || source.scope() != requested)
-                throw error(Code.UNSUPPORTED,
-                    "Source scope differs from requested export; full results require explicit "
-                    + "re-execution");
-            if (target == null || options == null || options.charset() == null
-                || options.escaping() == null || options.nullText() == null
-                || options.batchSize() < 1 || options.delimiter() == '\r'
-                || options.delimiter() == '\n' || options.delimiter() == '"'
-                || options.delimiter() == '\0')
-                throw error(Code.INVALID_INPUT, "Invalid CSV options");
-            if (cancellation == null)
-                throw error(Code.INVALID_INPUT, "Cancellation token is required");
-            if (cancellation.requested())
-                throw error(Code.CANCELLED, "CSV export cancelled");
-            RowSource bounded = new RowSource() {
-                public List<ResultColumn> columns() {
-                    return List.copyOf(source.columns());
-                }
+            if (requested == null || source.scope() != requested) {
+                throw error(Code.UNSUPPORTED, "Source scope differs from requested export");
+            }
 
-                public RowScope scope() {
-                    return source.scope();
-                }
+            validateOptions(target, options, cancellation);
+            checkCancellation(cancellation);
 
-                public Batch fetch(int size) {
-                    if (cancellation.requested())
-                        throw error(Code.CANCELLED, "CSV export cancelled");
-                    if (size < 1)
-                        throw error(Code.INVALID_INPUT, "Invalid fetch size");
-                    int limit = Math.min(size, options.batchSize());
-                    Batch b = source.fetch(limit);
-                    if (b.rows().size() > limit)
-                        throw error(Code.INTERNAL, "Source exceeded requested batch size");
-                    return b;
-                }
+            CsvResult result = port.exportCsv(
+                bounded(source, options.batchSize(), cancellation), target, options,
+                cancellation);
 
-                public void close() {} // owner is closed by the service
-            };
-            CsvResult result = port.exportCsv(bounded, target, options, cancellation);
-            if (cancellation.requested())
-                throw error(Code.CANCELLED, "CSV export cancelled");
+            checkCancellation(cancellation);
             return result;
         } catch (CoreException e) {
             throw e;
         } catch (RuntimeException e) {
-            throw error(
-                Code.INTERNAL, "CSV adapter or source contract failure; diagnostics withheld");
+            throw error(Code.INTERNAL, "CSV adapter or source contract failure; diagnostics withheld");
         }
     }
 
+    /** Создаёт источник из уже загруженной порции строк. */
     public static RowSource selectedBatch(List<ResultColumn> columns, Batch batch) {
         List<ResultColumn> metadata = List.copyOf(columns);
-        List<Row> rows = List.copyOf(batch.rows());
+        List<Row> rows = batch.rows();
         return new RowSource() {
-            int offset;
-            boolean closed;
+            private int offset;
+            private boolean closed;
 
+            @Override
             public List<ResultColumn> columns() {
                 return metadata;
             }
 
+            @Override
             public RowScope scope() {
                 return RowScope.SELECTED_BATCH;
             }
 
+            @Override
             public Batch fetch(int size) {
-                if (closed)
+                if (closed) {
                     throw error(Code.NOT_FOUND, "Source closed");
-                if (size < 1)
-                    throw error(Code.INVALID_INPUT, "Invalid fetch size");
-                int end = (int) Math.min(rows.size(), (long) offset + size);
-                Batch b = new Batch(rows.subList(offset, end), end == rows.size());
+                }
+
+                checkSize(size);
+                int end = offset + Math.min(size, rows.size() - offset);
+                Batch next = new Batch(rows.subList(offset, end), end == rows.size());
                 offset = end;
-                return b;
+                return next;
             }
 
+            @Override
             public void close() {
                 closed = true;
             }
         };
+    }
+
+    /** Ограничивает порции для файлового адаптера и проверяет отмену. */
+    private static RowSource bounded(RowSource source, int limit, Cancellation cancellation) {
+        return new RowSource() {
+            @Override
+            public List<ResultColumn> columns() {
+                return List.copyOf(source.columns());
+            }
+
+            @Override
+            public RowScope scope() {
+                return source.scope();
+            }
+
+            @Override
+            public Batch fetch(int size) {
+                checkCancellation(cancellation);
+                checkSize(size);
+                int requested = Math.min(size, limit);
+                Batch batch = source.fetch(requested);
+                if (batch.rows().size() > requested) {
+                    throw error(Code.INTERNAL, "Source exceeded requested batch size");
+                }
+
+                return batch;
+            }
+
+            @Override
+            public void close() {
+                // Источник закрывает CsvService.
+            }
+        };
+    }
+
+    /** Проверяет настройки CSV до начала записи. */
+    private static void validateOptions(Target target, CsvOptions options, Cancellation cancellation) {
+        if (target == null || options == null || options.charset() == null
+            || options.escaping() == null || options.nullText() == null || options.batchSize() < 1
+            || options.delimiter() == '\r' || options.delimiter() == '\n'
+            || options.delimiter() == '"' || options.delimiter() == '\0') {
+            throw error(Code.INVALID_INPUT, "Invalid CSV options");
+        }
+        if (cancellation == null) {
+            throw error(Code.INVALID_INPUT, "Cancellation token is required");
+        }
+    }
+
+    /** Останавливает экспорт, если запрошена отмена. */
+    private static void checkCancellation(Cancellation cancellation) {
+        if (cancellation.requested()) {
+            throw error(Code.CANCELLED, "CSV export cancelled");
+        }
+    }
+
+    /** Требует положительный размер порции. */
+    private static void checkSize(int size) {
+        if (size < 1) {
+            throw error(Code.INVALID_INPUT, "Invalid fetch size");
+        }
     }
 }

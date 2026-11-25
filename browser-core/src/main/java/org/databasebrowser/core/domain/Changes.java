@@ -18,10 +18,7 @@ import org.databasebrowser.core.domain.Schema.View;
 
 public final class Changes {
     private Changes() {}
-    /**
-     * Form drafts: strings may be blank; validation returns all field problems before adapters
-     * run.
-     */
+    /** Черновик формы. Ошибки полей собираются до вызова адаптера. */
 
     public sealed interface Request permits CreateTable, DropTable, AddColumn, AlterColumn,
         DropColumn, AddConstraint, DropConstraint, CreateIndex, DropIndex, CreateView, AlterView,
@@ -142,10 +139,7 @@ public final class Changes {
             dataLoss = List.copyOf(dataLoss);
         }
     }
-    /**
-     * Adapter-owned immutable execution recipe; never exposed by the application service. No driver
-     * objects.
-     */
+    /** Неизменяемый рецепт адаптера без ресурсов драйвера. Скрыт от интерфейса. */
 
     public interface ExecutionRecipe {}
 

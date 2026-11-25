@@ -81,7 +81,7 @@ public final class Sql {
 
     public record Options(ExecutionMode mode, TransactionPolicy transaction, int initialBatchSize,
         Duration timeout) {}
-    /** operationId is allocated by BrowserService.newOperationId before execute/explain. */
+    /** Идентификатор операции резервируется через newOperationId до запуска SQL или EXPLAIN. */
     public record
         Request(OperationId operationId, String sql, List<Parameter> parameters, Options options) {
         public Request {

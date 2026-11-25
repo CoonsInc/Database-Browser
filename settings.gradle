@@ -1,2 +1,3 @@
 rootProject.name = 'Database-Browser'
 include 'browser-core'
+include 'browser-sqlite'

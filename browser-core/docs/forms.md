@@ -12,7 +12,7 @@ Preparation(Optional<Plan>, List<Problem>). WARNING не блокирует са
 | Форма / request | Поля | Общие проверки и пути |
 |---|---|---|
 | Таблица / CreateTable(Table) | id (назначает UI в namespace сессии), name: QualifiedName; упорядоченные columns; constraints; definition | table.id, table.name.name обязательны; catalog/namespace необязательны, но непусты при наличии. table.columns непуст; table.columns[i] проверяются как колонки. Дубликаты имён: table.columns[i]. Не более одного PK: table.constraints. Дубликаты имён ограничений: table.constraints[i]. |
-| Колонка / AddColumn(table,column), AlterColumn(table,originalName,desired) | table обязателен; originalName у изменения обязателен; name, DataType(name,parameters,originalDeclaration,known), nullable, defaultExpression, attributes | column.name, column.type.name обязательны; column.type.parameters[i] непусты. У изменения пути desired.name/desired.type.name. originalName идентифицирует исходную колонку, desired полностью задаёт итоговые свойства. Тип и параметры уточняет адаптер. |
+| Колонка / AddColumn(table,column), AlterColumn(table,originalName,desired) | table и имя колонки обязательны. У изменения originalName указывает исходную колонку, а desired задаёт её итоговые свойства. | Объявленный тип задаётся через DataType(name, parameters, originalDeclaration, known). Для него имя типа и переданные параметры должны быть непустыми. Отсутствие объявления задаётся через DataType.undeclared(). Допустимость этого варианта проверяет адаптер. |
 | Удаление колонки / DropColumn | table, column | Оба обязательны. Существование проверяется по snapshot. Ссылки ограничений проверяются на итоговой структуре. |
 | Ограничение / AddConstraint(table,constraint) | name необязательно; PK/Unique: columns; FK: columns, referencedTable, referencedColumns, onDelete/onUpdate; Check: expression | constraint.columns непуст, порядок значим; constraint.columns[i] без дублей. FK: равное число локальных и удалённых колонок, обе стороны непусты, referencedTable.name обязательно. constraint.referencedColumns — foreign_key_arity. constraint.expression обязательно для CHECK. Ссылки локальных колонок при подготовке: table.constraints[i].columns[j], unknown_column. |
 | Удаление ограничения / DropConstraint | table, constraintName | Обязательны; для безымянного ограничения MVP не поддерживает адресное удаление. Адаптер явно отклоняет операцию. |
@@ -26,6 +26,10 @@ foreign_key_arity, index_term. Path — строковый путь к полю,
 У первичного запроса AddConstraint ошибки структуры имеют constraint.*, а проверка
 ссылок в полном контексте таблицы — table.constraints[i].*. UI может использовать
 исходную таблицу для сопоставления индекса ограничения форме.
+
+Для колонки без объявления типа column.type().declared() возвращает false.
+Такую колонку можно представить и в черновике, и в снимке существующей схемы.
+Адаптер проверяет допустимость с учётом СУБД и свойств таблицы в prepareChange.
 
 DEFAULT отсутствует: Optional.empty(); явно DEFAULT NULL: Optional.of("NULL").
 Отключённое поле DEFAULT не следует превращать в строку "NULL".

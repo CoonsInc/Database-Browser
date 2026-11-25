@@ -43,7 +43,7 @@ public final class Errors {
             return new Problem(code, Severity.ERROR, path, message, Map.of());
         }
     }
-    /** Adapter supplies only diagnostics already redacted of credentials and sensitive values. */
+    /** Адаптер удаляет из диагностики данные доступа и секреты. */
     public record
         Diagnostic(Optional<String> vendorCode, Optional<String> sqlState, String safeMessage) {}
 

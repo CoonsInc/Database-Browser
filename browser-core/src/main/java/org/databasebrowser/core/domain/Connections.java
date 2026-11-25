@@ -10,10 +10,7 @@ import org.databasebrowser.core.domain.Ids.SessionId;
 
 public final class Connections {
     private Connections() {}
-    /**
-     * No diagnostic rendering of either normal or secret properties (URLs can also contain
-     * secrets).
-     */
+    /** Свойства и секреты подключения скрыты в диагностике. */
 
     public record Settings(AdapterId adapter, String displayName, Map<String, String> properties,
         Map<String, String> secrets) {
@@ -79,7 +76,7 @@ public final class Connections {
             parameterNames = List.copyOf(parameterNames);
         }
     }
-    /** Adapter comparison may be case sensitive or follow database identifier semantics. */
+    /** Сравнивает имена по правилам адаптера. */
     @FunctionalInterface
 
     public interface IdentifierRules {

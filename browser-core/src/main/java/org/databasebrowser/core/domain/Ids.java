@@ -3,14 +3,15 @@ package org.databasebrowser.core.domain;
 import java.util.Objects;
 import java.util.UUID;
 
-/** IDs are opaque, globally unique within a running core instance. */
+/** Непрозрачные идентификаторы, уникальные в пределах экземпляра core. */
 public final class Ids {
     private Ids() {}
 
     public record AdapterId(String value) {
         public AdapterId {
-            if (value == null || value.isBlank())
+            if (value == null || value.isBlank()) {
                 throw new IllegalArgumentException("adapter id");
+            }
         }
     }
 

@@ -5,14 +5,18 @@ import org.databasebrowser.core.domain.Changes.Prepared;
 import org.databasebrowser.core.domain.Changes.Request;
 import org.databasebrowser.core.domain.Ids.SessionId;
 
-/**
- * Preparation is read-only and releases database locks before return.
- * applyChange executes exactly the recipe returned by prepareChange, under adapter protection;
- * rechecks schema AND data before mutation. Staleness returns CONFLICT, never replans.
- * Recipe owns no live resources. Unknown outcomes must be reported, never retried automatically.
- */
+/** Готовит и применяет изменения схемы. Рецепты не хранят открытые ресурсы. */
 public interface SchemaChangePort {
+    /**
+     * Проверяет черновик, включая колонки без типа. БД доступна только для чтения.
+     * Взятые при подготовке блокировки снимаются до возврата.
+     */
     Prepared prepareChange(SessionId sessionId, Request request);
 
+    /**
+     * Повторно проверяет схему и данные с защитой от конкурентных изменений.
+     * Применяет подтверждённый рецепт. Для устаревшего плана возвращает CONFLICT.
+     * При неизвестном исходе сообщает об этом без повтора.
+     */
     ApplyResult applyChange(SessionId sessionId, Prepared plan);
 }

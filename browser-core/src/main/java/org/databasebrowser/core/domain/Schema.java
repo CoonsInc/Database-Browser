@@ -13,15 +13,27 @@ public final class Schema {
     public record QualifiedName(Optional<String> catalog, Optional<String> namespace, String name) {
     }
 
-    public record DataType(
-        String name, List<String> parameters, Optional<String> originalDeclaration, boolean known) {
+    /** Объявленный тип колонки или явное отсутствие объявления. */
+    public record DataType(String name, List<String> parameters, Optional<String> originalDeclaration,
+        boolean known, boolean declared) {
+        public DataType(String name, List<String> parameters, Optional<String> originalDeclaration,
+            boolean known) {
+            this(name, parameters, originalDeclaration, known, true);
+        }
+
         public DataType {
             parameters = List.copyOf(parameters);
+            if (!declared && (!"".equals(name) || !parameters.isEmpty()
+                || !Optional.empty().equals(originalDeclaration) || known)) {
+                throw new IllegalArgumentException("An undeclared type cannot carry type information");
+            }
+        }
+
+        public static DataType undeclared() {
+            return new DataType("", List.of(), Optional.empty(), false, false);
         }
     }
-    /**
-     * Optional.empty() = no DEFAULT; Optional.of("NULL") = explicit DEFAULT NULL. SQL is opaque.
-     */
+    /** Пустой Optional означает отсутствие DEFAULT, строка «NULL» задаёт DEFAULT NULL. */
 
     public record Column(String name, DataType type, boolean nullable,
         Optional<String> defaultExpression, Map<String, String> attributes) {
@@ -82,7 +94,7 @@ public final class Schema {
     }
 
     public enum Direction { ASC, DESC, UNSPECIFIED }
-    /** Expression preserves indexes that are not simple column lists. */
+    /** Элемент индекса по колонке или выражению. */
 
     public record IndexTerm(Optional<String> column, Optional<String> expression,
         Direction direction, Optional<String> collation) {}
@@ -113,7 +125,7 @@ public final class Schema {
             limitations = List.copyOf(limitations);
         }
     }
-    /** Adapter must return a consistent snapshot and an opaque version token. */
+    /** Согласованный снимок схемы с непрозрачной меткой версии. */
 
     public record Snapshot(SessionId session, AdapterId dialect, String stateToken,
         List<QualifiedName> namespaces, List<SchemaObject> objects, Dependencies dependencies) {
